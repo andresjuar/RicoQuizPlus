@@ -1,4 +1,4 @@
-# Proyecto-final-servidor
+# RicoQuiz+
 
 Plataforma de trivia interactivas en tiempo real. Proyecto integrador de la
 materia Tecnologías de Desarrollo en el Servidor.
