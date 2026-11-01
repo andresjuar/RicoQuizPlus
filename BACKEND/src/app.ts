@@ -21,6 +21,7 @@ export function createApp() {
 
     const swaggerSpec = swaggerJSDoc(swaggerConfig);
     app.use('/api-docs', serve, setup(swaggerSpec));
+    app.get('/api-docs.json', (_req, res) => res.json(swaggerSpec));
 
     app.use(router);
     app.use(errorMiddleware);
