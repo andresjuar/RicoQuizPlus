@@ -3,9 +3,7 @@ import mongoose from 'mongoose';
 import { AppError } from '../utils/AppError';
 import multer from 'multer';
 
-export function errorMiddleware(err: unknown, req: Request, res: Response, next: NextFunction) {
-    console.error(err);
-
+export function errorMiddleware(err: unknown, _req: Request, res: Response, _next: NextFunction) {
     if (err instanceof AppError) {
         return res.status(err.statusCode).json({ message: err.message });
     }
@@ -28,6 +26,8 @@ export function errorMiddleware(err: unknown, req: Request, res: Response, next:
         return res.status(400).json({ message: `Error al subir el archivo: ${err.message}` });
     }
 
+    // Solo los errores inesperados van al log; los AppError son respuestas normales (401, 404...)
+    console.error(err);
     return res.status(500).json({
         message: 'Error del servidor',
     });

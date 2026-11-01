@@ -1,19 +1,39 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '../utils/asyncHandler';
 import { AppError } from '../utils/AppError';
-import { User } from '../models/user.model';
+import { IUser, User } from '../models/user.model';
 import { generarTokenJWT } from '../utils/jwt';
 import { generarTokenActivacion, verificarTokenActivacion } from '../utils/activation';
 import { sendActivationEmail } from '../services/mail.service';
+import { verifyGoogleCredential } from '../services/google.service';
+import { env } from '../config/env.config';
 import bcrypt from 'bcrypt';
+
+/** Forma pública del usuario que regresan register, login, google y me. */
+export function toPublicUser(user: IUser) {
+    return {
+        _id: user._id,
+        email: user.email,
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl ?? '',
+        isActive: user.isActive,
+        authProvider: user.authProvider ?? 'local',
+        createdAt: user.createdAt,
+    };
+}
+
+function sessionFor(user: IUser) {
+    const token = generarTokenJWT({ id: user._id.toString(), email: user.email });
+    return { token, user: toPublicUser(user) };
+}
 
 /**
  * POST /auth/register
  *
- * La cuenta se crea con isActive:false. NO se regresa un token de sesión aquí
- * a propósito: si se regresara, alguien podría saltarse por completo la
- * activación por correo con solo registrarse. Hay que activar la cuenta
- * (ver GET /auth/activate/:token) antes de poder hacer login.
+ * Depende de REQUIRE_EMAIL_ACTIVATION:
+ * - false (default): la cuenta se crea activa y se regresa la sesión { token, user }.
+ * - true: la cuenta se crea inactiva, se manda el correo y NO se regresa token
+ *   (si se regresara, alguien podría saltarse la activación con solo registrarse).
  */
 export const register = asyncHandler(async (req: Request, res: Response) => {
     const { email, displayName, password } = req.body;
@@ -29,18 +49,24 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    const requiresActivation = env.requireEmailActivation;
+
     const user = await User.create({
         email,
         displayName,
         password: hashedPassword,
-        isActive: false,
+        isActive: !requiresActivation,
     });
+
+    if (!requiresActivation) {
+        return res.status(201).json({ message: 'Cuenta creada.', requiresActivation, ...sessionFor(user) });
+    }
 
     const activationToken = generarTokenActivacion(user._id.toString());
 
     try {
         await sendActivationEmail(user.email, user.displayName, activationToken);
-        console.log("Correo Enviado")
+        console.log('Correo de activación enviado');
     } catch (error) {
         // No tumbamos el registro solo porque el correo no salió (SMTP caído, etc.):
         // la cuenta queda creada pero inactiva, y se puede reintentar el envío después.
@@ -49,22 +75,16 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
 
     return res.status(201).json({
         message: 'Cuenta creada. Revisa tu correo para activarla antes de iniciar sesión.',
-        user: {
-            id: user._id,
-            email: user.email,
-            displayName: user.displayName,
-            avatarUrl: user.avatarUrl,
-            isActive: user.isActive,
-        },
+        requiresActivation,
+        user: toPublicUser(user),
     });
 });
 
 /**
  * GET /auth/activate/:token
  *
- * Se abre directo desde el link del correo. Activa la cuenta (isActive: true) y
- * responde con una página HTML simple de confirmación (pensado para abrirse en
- * el navegador, no para ser consumido por un cliente HTTP programático).
+ * El correo lleva al cliente (/activate/:token) y el cliente llama aquí: responde JSON.
+ * Si alguien abre un link viejo directo en el navegador (Accept: text/html), responde HTML.
  */
 export const activateAccount = asyncHandler(async (req: Request, res: Response) => {
     const token = String(req.params.token ?? '');
@@ -84,6 +104,10 @@ export const activateAccount = asyncHandler(async (req: Request, res: Response) 
     if (!user.isActive) {
         user.isActive = true;
         await user.save();
+    }
+
+    if (req.accepts(['json', 'html']) !== 'html') {
+        return res.status(200).json({ message: 'Tu cuenta ya está activa. Ya puedes iniciar sesión.' });
     }
 
     return res
@@ -120,12 +144,11 @@ export const resendActivation = asyncHandler(async (req: Request, res: Response)
 
     const user = await User.findOne({ email });
 
-    if (user && !user.isActive) {
+    if (env.requireEmailActivation && user && !user.isActive) {
         const activationToken = generarTokenActivacion(user._id.toString());
         try {
             await sendActivationEmail(user.email, user.displayName, activationToken);
-            console.log("Correo Enviado")
-
+            console.log('Correo de activación reenviado');
         } catch (error) {
             // Igual que en register: no se filtra el fallo de envío en la respuesta,
             // solo se loguea para que el equipo lo detecte por su cuenta.
@@ -151,18 +174,20 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
         throw new AppError('Credenciales inválidas', 401);
     }
 
+    if (!user.password) {
+        throw new AppError('Esta cuenta se creó con Google. Inicia sesión con Google.', 400);
+    }
+
     const coincide = await bcrypt.compare(password, user.password);
     if (!coincide) {
         throw new AppError('Credenciales inválidas', 401);
     }
 
-    if (!user.isActive) {
+    if (env.requireEmailActivation && !user.isActive) {
         throw new AppError('Debes activar tu cuenta antes de iniciar sesión. Revisa tu correo.', 403);
     }
 
-    const token = generarTokenJWT({ id: user._id.toString(), email: user.email });
-
-    return res.status(200).json({ token });
+    return res.status(200).json(sessionFor(user));
 });
 /**
  * GET /auth/me
@@ -172,30 +197,70 @@ export const me = asyncHandler(async (req: Request, res: Response) => {
         throw new AppError('No autorizado', 401);
     }
 
-    return res.status(200).json({ user: req.user });
+    const user = await User.findById(req.user.id);
+    if (!user) {
+        throw new AppError('El usuario de esta sesión ya no existe', 401);
+    }
+
+    return res.status(200).json({ user: toPublicUser(user) });
 });
 
 /**
- * GET /auth/google
+ * POST /auth/google  { credential }
+ *
+ * credential = ID token que Google Identity Services le da al cliente.
+ * 1. Si ya hay usuario con ese googleId, inicia sesión.
+ * 2. Si hay una cuenta local con el mismo correo (verificado por Google), se vinculan:
+ *    se le agrega googleId y desde entonces puede entrar de las dos formas.
+ * 3. Si no existe, se crea una cuenta de Google (sin contraseña, ya activa).
  */
-export const googleAuth = (req: Request, res: Response) => {
-    return res.redirect('https://accounts.google.com/o/oauth2/v2/auth?mock=true');
-};
+export const googleLogin = asyncHandler(async (req: Request, res: Response) => {
+    const { credential } = req.body ?? {};
 
-/**
- * GET /auth/google/callback?code=...
- */
-export const googleCallback = (req: Request, res: Response) => {
-    return res.status(200).json({
-        token: 'jwt.mock.token',
-        user: {
-            id: '1',
-            displayName: 'Usuario Mock',
-            email: 'mock@example.com',
-            avatarUrl: '',
-        },
-    });
-};
+    if (!credential || typeof credential !== 'string') {
+        throw new AppError('credential es requerido', 400);
+    }
+
+    if (!env.googleClientId) {
+        throw new AppError('El inicio de sesión con Google no está configurado en el servidor', 503);
+    }
+
+    let profile;
+    try {
+        profile = await verifyGoogleCredential(credential);
+    } catch {
+        throw new AppError('El token de Google es inválido o expiró', 401);
+    }
+
+    if (!profile.emailVerified) {
+        throw new AppError('Tu correo de Google no está verificado', 401);
+    }
+
+    let user = await User.findOne({ googleId: profile.googleId });
+
+    if (!user) {
+        user = await User.findOne({ email: profile.email });
+
+        if (user) {
+            // Vinculación: Google ya verificó el correo, así que también cuenta como activación
+            user.googleId = profile.googleId;
+            user.isActive = true;
+            if (!user.avatarUrl) user.avatarUrl = profile.avatarUrl;
+            await user.save();
+        } else {
+            user = await User.create({
+                email: profile.email,
+                displayName: profile.displayName,
+                avatarUrl: profile.avatarUrl,
+                authProvider: 'google',
+                googleId: profile.googleId,
+                isActive: true,
+            });
+        }
+    }
+
+    return res.status(200).json(sessionFor(user));
+});
 
 /**
  * POST /auth/logout

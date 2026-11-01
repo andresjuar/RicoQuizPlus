@@ -16,6 +16,59 @@ const swaggerConfig: Options = {
         ],
         components: {
             schemas: {
+                Error: {
+                    type: 'object',
+                    description: 'Formato único de error de la API (lo genera errorMiddleware)',
+                    required: ['message'],
+                    properties: {
+                        message: { type: 'string', example: 'Quiz no encontrado' },
+                        errores: {
+                            type: 'array',
+                            description: 'Solo en errores de validación (400)',
+                            items: { type: 'string' },
+                            example: ['El título debe tener al menos 3 caracteres'],
+                        },
+                    },
+                },
+                AuthResponse: {
+                    type: 'object',
+                    properties: {
+                        token: { type: 'string', example: 'eyJhbGciOi...' },
+                        user: { $ref: '#/components/schemas/Usuario' },
+                    },
+                },
+                QuizSummary: {
+                    type: 'object',
+                    description: 'Quiz en listados (sin preguntas, para no exponer respuestas)',
+                    properties: {
+                        _id: { type: 'string' },
+                        title: { type: 'string' },
+                        description: { type: 'string' },
+                        coverImageUrl: { type: 'string' },
+                        topic: { type: 'string' },
+                        tags: { type: 'array', items: { type: 'string' } },
+                        isPublic: { type: 'boolean' },
+                        timesPlayed: { type: 'integer' },
+                        questionCount: { type: 'integer', example: 10 },
+                        totalSeconds: { type: 'integer', example: 200 },
+                        owner: {
+                            type: 'object',
+                            properties: { _id: { type: 'string' }, displayName: { type: 'string' } },
+                        },
+                        createdAt: { type: 'string', format: 'date-time' },
+                        updatedAt: { type: 'string', format: 'date-time' },
+                    },
+                },
+                QuizPage: {
+                    type: 'object',
+                    properties: {
+                        data: { type: 'array', items: { $ref: '#/components/schemas/QuizSummary' } },
+                        total: { type: 'integer', example: 42 },
+                        page: { type: 'integer', example: 1 },
+                        limit: { type: 'integer', example: 12 },
+                        totalPages: { type: 'integer', example: 4 },
+                    },
+                },
                 Usuario: {
                     type: 'object',
                     properties: {
@@ -41,6 +94,11 @@ const swaggerConfig: Options = {
                         isActive: {
                             type: 'boolean',
                             default: false,
+                        },
+                        authProvider: {
+                            type: 'string',
+                            enum: ['local', 'google'],
+                            default: 'local',
                         },
                         createdQuizzes: {
                             type: 'array',

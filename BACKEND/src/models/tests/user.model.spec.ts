@@ -42,6 +42,22 @@ describe('User model', () => {
         expect(error?.errors.password).toBeDefined();
     });
 
+    it('no exige password a una cuenta de Google', () => {
+        const user = new User({ email: 'g@example.com', displayName: 'Google', authProvider: 'google' });
+        const error = user.validateSync();
+        expect(error).toBeUndefined();
+    });
+
+    it('sí exige password a una cuenta local', () => {
+        const user = new User({ ...datosValidos, password: undefined });
+        const error = user.validateSync();
+        expect(error?.errors.password).toBeDefined();
+    });
+
+    it('usa authProvider:local por defecto', () => {
+        expect(new User(datosValidos).authProvider).toBe('local');
+    });
+
     it('usa isActive:false y createdQuizzes:[] por defecto', () => {
         const user = new User(datosValidos);
         expect(user.isActive).toBe(false);
