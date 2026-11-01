@@ -4,6 +4,7 @@ import {
     getMyQuizzes,
     createQuiz,
     generateQuiz,
+    generateQuestions,
     getQuizById,
     updateQuiz,
     deleteQuiz,
@@ -234,6 +235,44 @@ router.post('/', authMiddleware, createQuiz);
  *         description: El topic es requerido
  */
 router.post('/generate', authMiddleware, generateQuiz);
+
+/**
+ * @swagger
+ * /quizzes/generate-questions:
+ *   post:
+ *     tags: [Quizzes]
+ *     summary: Genera preguntas con IA sin guardar el quiz (para revisarlas en el formulario)
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [topic]
+ *             properties:
+ *               topic: { type: string, example: Sistema solar }
+ *               numQuestions: { type: integer, minimum: 1, maximum: 20, default: 5 }
+ *     responses:
+ *       200:
+ *         description: Preguntas generadas ({ questions })
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 questions:
+ *                   type: array
+ *                   items: { $ref: '#/components/schemas/Question' }
+ *       400:
+ *         description: Falta el topic
+ *       401:
+ *         description: No autorizado
+ *       502:
+ *         description: Falló la generación con IA
+ */
+router.post('/generate-questions', authMiddleware, generateQuestions);
 
 /**
  * @swagger

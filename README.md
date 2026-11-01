@@ -61,6 +61,29 @@ Contraseña: Password123
 5. El servidor queda disponible en `http://localhost:3000` y la documentación
    interactiva de la API, junto con la documentación de los esquemas de la base de datos en `http://localhost:3000/api-docs`. O en https://proyecto-final-servidor-k6wl.onrender.com/api-docs
 
+La API ya no sirve el frontend vanilla: el único cliente es la SPA de Angular (RicoQuizPlusClient, en Netlify).
+
+## Activación de cuenta por correo
+
+Está codificada completa (token firmado, correo, `GET /auth/activate/:token`, reenvío), pero se controla con una variable:
+
+| `REQUIRE_EMAIL_ACTIVATION` | Registro | Login |
+| --- | --- | --- |
+| `false` (default) | La cuenta se crea activa y responde `{ token, user }` | No revisa `isActive` |
+| `true` | La cuenta se crea inactiva, se manda el correo y no hay token | 403 hasta activar |
+
+Para demostrarla: poner `REQUIRE_EMAIL_ACTIVATION=true` en `.env` (o en Render → Environment) y reiniciar. Render free bloquea SMTP, así que ahí hay que poner `BREVO_API_KEY` y `MAIL_FROM` (remitente verificado en Brevo); en local basta `SMTP_USER`/`SMTP_PASS` de Gmail. El link del correo abre `CLIENT_URL/activate/:token`.
+
+## Login con Google
+
+El cliente usa Google Identity Services y manda el ID token a `POST /auth/google { credential }`. La API lo verifica contra `GOOGLE_CLIENT_ID`; si ya existe una cuenta local con ese correo, la vincula (agrega `googleId`), si no, crea una cuenta de Google sin contraseña. En Google Cloud Console el Client ID tipo *Web* necesita en *Authorized JavaScript origins* `http://localhost:4200` y la URL de Netlify.
+
+## Despliegue en Render
+
+- Root directory `BACKEND`, build `npm ci && npm run build`, start `npm start`, health check `/health`.
+- Variables: `MONGODB_URI`, `JWT_SECRET`, `ACTIVATION_TOKEN_SECRET`, `GOOGLE_CLIENT_ID`, `CLIENT_URL`, `CORS_ORIGIN`, `APP_BASE_URL`, `GEMINI_API_KEY`, `CLOUDINARY_*` y, solo para la demo de activación, `REQUIRE_EMAIL_ACTIVATION`, `BREVO_API_KEY`, `MAIL_FROM`.
+- `CORS_ORIGIN` acepta varios orígenes separados por coma y comodines para los deploy previews: `https://<sitio>.netlify.app,https://*--<sitio>.netlify.app`.
+
 
 ## Scripts Disponibles
 
