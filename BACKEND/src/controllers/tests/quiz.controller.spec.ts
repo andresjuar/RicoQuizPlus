@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { getQuizById, createQuiz, updateQuiz, deleteQuiz } from '../quiz.controller';
+import { getQuizzes, getMyQuizzes, getQuizById, createQuiz, updateQuiz, deleteQuiz } from '../quiz.controller';
 import { Quiz } from '../../models/quiz.model';
 import { User } from '../../models/user.model';
 import { AppError } from '../../utils/AppError';
@@ -55,9 +55,90 @@ describe('quiz.controller', () => {
         next = jest.fn();
     });
 
+    describe('listados', () => {
+        // find().populate().select().sort().skip().limit() encadenado
+        function mockFind(resultado: unknown[]) {
+            const chain = {
+                populate: jest.fn().mockReturnThis(),
+                select: jest.fn().mockReturnThis(),
+                sort: jest.fn().mockReturnThis(),
+                skip: jest.fn().mockReturnThis(),
+                limit: jest.fn().mockResolvedValue(resultado),
+            };
+            (Quiz.find as jest.Mock).mockReturnValue(chain);
+            return chain;
+        }
+
+        it('getQuizzes solo busca públicos, escapa la búsqueda y regresa totalPages', async () => {
+            const chain = mockFind([{ _id: 'q1' }]);
+            (Quiz.countDocuments as jest.Mock).mockResolvedValue(25);
+
+            const req = { query: { q: 'c++', page: '2', limit: '10' } } as unknown as Request;
+            getQuizzes(req, res, next);
+            await esperarHandler();
+
+            const filtro = (Quiz.find as jest.Mock).mock.calls[0][0];
+            expect(filtro.isPublic).toBe(true);
+            expect(filtro.$or[0].title.$regex).toBe('c\\+\\+');
+            expect(chain.skip).toHaveBeenCalledWith(10);
+            expect(res.json).toHaveBeenCalledWith({
+                data: [{ _id: 'q1' }],
+                total: 25,
+                page: 2,
+                limit: 10,
+                totalPages: 3,
+            });
+        });
+
+        it('getQuizzes limita el tamaño de página a 50', async () => {
+            const chain = mockFind([]);
+            (Quiz.countDocuments as jest.Mock).mockResolvedValue(0);
+
+            getQuizzes({ query: { limit: '1000' } } as unknown as Request, res, next);
+            await esperarHandler();
+
+            expect(chain.limit).toHaveBeenCalledWith(50);
+        });
+
+        it('getMyQuizzes filtra por el usuario del token e incluye privados', async () => {
+            mockFind([]);
+            (Quiz.countDocuments as jest.Mock).mockResolvedValue(0);
+
+            const req = { query: { visibility: 'private' }, user: { id: 'user-1' } } as unknown as Request;
+            getMyQuizzes(req, res, next);
+            await esperarHandler();
+
+            expect(Quiz.find).toHaveBeenCalledWith({ owner: 'user-1', isPublic: false });
+            expect(res.status).toHaveBeenCalledWith(200);
+        });
+    });
+
     describe('getQuizById', () => {
+        it('pasa un AppError 404 a next si el quiz es privado y quien lo pide no es el dueño', async () => {
+            (Quiz.findById as jest.Mock).mockReturnValue({
+                populate: jest.fn().mockResolvedValue({ _id: 'quiz-1', isPublic: false, owner: { _id: 'otro' } }),
+            });
+
+            const req = { params: { id: 'quiz-1' }, user: { id: 'user-1' } } as unknown as Request;
+            getQuizById(req, res, next);
+            await esperarHandler();
+
+            expect((next as jest.Mock).mock.calls[0][0].statusCode).toBe(404);
+        });
+
+        it('responde 200 con un quiz privado si quien lo pide es el dueño', async () => {
+            const privado = { _id: 'quiz-1', isPublic: false, owner: { _id: 'user-1' } };
+            (Quiz.findById as jest.Mock).mockReturnValue({ populate: jest.fn().mockResolvedValue(privado) });
+
+            const req = { params: { id: 'quiz-1' }, user: { id: 'user-1' } } as unknown as Request;
+            getQuizById(req, res, next);
+            await esperarHandler();
+
+            expect(res.json).toHaveBeenCalledWith(privado);
+        });
+
         it('responde 200 con el quiz cuando existe', async () => {
-            const quizFalso = { _id: 'quiz-1', title: 'Quiz de prueba' };
+            const quizFalso = { _id: 'quiz-1', title: 'Quiz de prueba', isPublic: true };
             (Quiz.findById as jest.Mock).mockReturnValue({
                 populate: jest.fn().mockResolvedValue(quizFalso),
             });

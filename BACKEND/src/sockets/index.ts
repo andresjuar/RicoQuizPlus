@@ -1,6 +1,6 @@
 import type { Server as HttpServer } from 'http';
 import { Server } from 'socket.io';
-import { env } from '../config/env.config';
+import { corsOptions } from '../config/cors.config';
 import { socketAuthMiddleware } from './auth.socket';
 import { registerRoomHandlers } from './handlers/room.handler';
 import { registerGameHandlers } from './handlers/game.handler';
@@ -10,10 +10,7 @@ import type { ClientToServerEvents, ServerToClientEvents, SocketData } from '../
 
 export function initSockets(httpServer: HttpServer) {
     const io = new Server<ClientToServerEvents, ServerToClientEvents, SocketData>(httpServer, {
-        cors: {
-            origin: env.corsOrigin,
-            credentials: true,
-        },
+        cors: corsOptions,
     });
 
     const matches = io.of('/matches');

@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import {
-    googleCallback,
-    googleAuth,
+    googleLogin,
     logout,
     register,
     login,
@@ -20,10 +19,10 @@ const router = Router();
  *     tags: [Auth]
  *     summary: Registra un nuevo usuario con email y contraseña
  *     description: >
- *       La cuenta se crea inactiva (isActive:false) y se manda un correo con un
- *       link de activación. NO se regresa un token de sesión en la respuesta —
- *       hay que activar la cuenta primero (GET /auth/activate/{token}) antes de
- *       poder hacer login.
+ *       Depende de REQUIRE_EMAIL_ACTIVATION. Si está apagada (default) la cuenta
+ *       se crea activa y la respuesta trae { token, user }. Si está prendida, la
+ *       cuenta se crea inactiva, se manda el correo de activación y la respuesta
+ *       NO trae token; hay que activar (GET /auth/activate/{token}) antes del login.
  *     requestBody:
  *       required: true
  *       content:
@@ -46,9 +45,21 @@ const router = Router();
  *                 example: Password123
  *     responses:
  *       201:
- *         description: Cuenta creada (inactiva), correo de activación enviado
+ *         description: Cuenta creada
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 message: { type: string }
+ *                 requiresActivation: { type: boolean }
+ *                 token: { type: string, description: Solo si requiresActivation es false }
+ *                 user: { $ref: '#/components/schemas/Usuario' }
  *       400:
  *         description: Error de validación o email ya registrado
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/Error' }
  */
 router.post('/register', register);
 
@@ -58,7 +69,9 @@ router.post('/register', register);
  *   get:
  *     tags: [Auth]
  *     summary: Activa una cuenta a partir del link mandado por correo
- *     description: Pensado para abrirse directo desde el correo (responde HTML, no JSON).
+ *     description: >
+ *       Lo llama la página /activate/{token} del cliente (responde JSON). Si se
+ *       abre directo en el navegador (Accept text/html) responde una página HTML.
  *     parameters:
  *       - in: path
  *         name: token
@@ -67,7 +80,7 @@ router.post('/register', register);
  *           type: string
  *     responses:
  *       200:
- *         description: Cuenta activada (página HTML de confirmación)
+ *         description: Cuenta activada ({ message })
  *       400:
  *         description: Token inválido o expirado
  *       404:
@@ -110,7 +123,9 @@ router.post('/resend-activation', resendActivation);
  *   post:
  *     tags: [Auth]
  *     summary: Inicia sesión con email y contraseña
- *     description: Falla con 403 si la cuenta todavía no ha sido activada por correo.
+ *     description: >
+ *       Falla con 403 si REQUIRE_EMAIL_ACTIVATION está prendida y la cuenta no se
+ *       ha activado. Falla con 400 si la cuenta se creó con Google y no tiene contraseña.
  *     requestBody:
  *       required: true
  *       content:
@@ -130,6 +145,11 @@ router.post('/resend-activation', resendActivation);
  *     responses:
  *       200:
  *         description: Login exitoso
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/AuthResponse' }
+ *       400:
+ *         description: Faltan campos o la cuenta es solo de Google
  *       401:
  *         description: Credenciales inválidas
  *       403:
@@ -147,35 +167,47 @@ router.post('/login', login);
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Usuario autenticado
+ *         description: Usuario autenticado ({ user })
  *       401:
- *         description: No autorizado
+ *         description: No autorizado o el usuario ya no existe
  */
 router.get('/me', authMiddleware, me);
 
 /**
  * @swagger
  * /auth/google:
- *   get:
+ *   post:
  *     tags: [Auth]
- *     summary: Inicia el flujo de autenticación OAuth 2.0 con Google
- *     responses:
- *       200:
- *         description: Redirección a Google, que en este momento es dummy
- */
-router.get('/google', googleAuth);
-
-/**
- * @swagger
- * /auth/google/callback:
- *   get:
- *     tags: [Auth]
- *     summary: Callback de Google después de autenticación
+ *     summary: Inicia sesión o registra con Google (ID token de Google Identity Services)
+ *     description: >
+ *       El cliente obtiene el credential con el botón de Google y lo manda aquí. La API
+ *       lo verifica contra GOOGLE_CLIENT_ID. Si existe una cuenta local con el mismo
+ *       correo, se vincula; si no existe, se crea una cuenta de Google ya activa.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [credential]
+ *             properties:
+ *               credential:
+ *                 type: string
+ *                 description: ID token (JWT) que regresa Google
  *     responses:
  *       200:
  *         description: Sesión iniciada
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/AuthResponse' }
+ *       400:
+ *         description: Falta el credential
+ *       401:
+ *         description: Token de Google inválido, expirado o correo sin verificar
+ *       503:
+ *         description: GOOGLE_CLIENT_ID no configurado en el servidor
  */
-router.get('/google/callback', googleCallback);
+router.post('/google', googleLogin);
 
 /**
  * @swagger

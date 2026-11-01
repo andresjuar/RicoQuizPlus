@@ -6,22 +6,41 @@ import { User } from '../models/user.model';
 import { generateTriviaQuestions } from '../services/Ai.service';
 import { uploadImageBuffer } from '../services/Cloudinary.service';
 
-/**
- * GET /quizzes?q=&tags=&page=&limit=
- */
-export const getQuizzes = asyncHandler(async (req: Request, res: Response) => {
-    const { q, tags, owner } = req.query;
+// Campos de listado: sin preguntas (no exponer respuestas) pero con conteo y duración
+const SUMMARY_PROJECTION = {
+    title: 1,
+    description: 1,
+    coverImageUrl: 1,
+    topic: 1,
+    tags: 1,
+    isPublic: 1,
+    timesPlayed: 1,
+    owner: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    questionCount: { $size: { $ifNull: ['$questions', []] } },
+    totalSeconds: { $sum: '$questions.timeLimitSeconds' },
+};
+
+const MAX_LIMIT = 50;
+
+const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Filtros y paginado compartidos por GET /quizzes y GET /quizzes/mine. */
+async function listQuizzes(req: Request, res: Response, baseFilter: Record<string, unknown>) {
+    const { q, tags, topic } = req.query;
     const page = Math.max(Number(req.query.page) || 1, 1);
-    const limit = Math.max(Number(req.query.limit) || 10, 1);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), MAX_LIMIT);
 
-    const filtro: Record<string, unknown> = { isPublic: true };
-
-    if (owner) {
-        filtro.owner = String(owner);
-    }
+    const filtro: Record<string, unknown> = { ...baseFilter };
 
     if (q) {
-        filtro.title = { $regex: String(q), $options: 'i' };
+        const regex = { $regex: escapeRegex(String(q).trim()), $options: 'i' };
+        filtro.$or = [{ title: regex }, { description: regex }, { tags: regex }];
+    }
+
+    if (topic) {
+        filtro.topic = String(topic);
     }
 
     if (tags) {
@@ -36,8 +55,9 @@ export const getQuizzes = asyncHandler(async (req: Request, res: Response) => {
 
     const [quizzes, total] = await Promise.all([
         Quiz.find(filtro)
-            .populate('owner', 'displayName')
-            .select('title coverImageUrl tags timesPlayed owner')
+            .populate('owner', 'displayName avatarUrl')
+            .select(SUMMARY_PROJECTION)
+            .sort({ createdAt: -1 })
             .skip((page - 1) * limit)
             .limit(limit),
         Quiz.countDocuments(filtro),
@@ -48,7 +68,30 @@ export const getQuizzes = asyncHandler(async (req: Request, res: Response) => {
         total,
         page,
         limit,
+        totalPages: Math.ceil(total / limit),
     });
+}
+
+/**
+ * GET /quizzes?q=&topic=&tags=&owner=&page=&limit=
+ * Solo quizzes públicos.
+ */
+export const getQuizzes = asyncHandler(async (req: Request, res: Response) => {
+    const base: Record<string, unknown> = { isPublic: true };
+    if (req.query.owner) base.owner = String(req.query.owner);
+    return listQuizzes(req, res, base);
+});
+
+/**
+ * GET /quizzes/mine?visibility=all|public|private&q=&topic=&page=&limit=
+ * Quizzes del usuario autenticado, públicos y privados.
+ */
+export const getMyQuizzes = asyncHandler(async (req: Request, res: Response) => {
+    const base: Record<string, unknown> = { owner: req.user!.id };
+    const { visibility } = req.query;
+    if (visibility === 'public') base.isPublic = true;
+    if (visibility === 'private') base.isPublic = false;
+    return listQuizzes(req, res, base);
 });
 
 /**
@@ -107,7 +150,9 @@ export const getQuizById = asyncHandler(async (req: Request, res: Response) => {
 
     const quiz = await Quiz.findById(id).populate('owner', 'displayName avatarUrl');
 
-    if (!quiz) {
+    // Un quiz privado solo lo ve su dueño; a los demás se les responde como si no existiera
+    const ownerId = (quiz?.owner as { _id?: { toString(): string } } | undefined)?._id?.toString();
+    if (!quiz || (!quiz.isPublic && ownerId !== req.user?.id)) {
         throw new AppError('Quiz no encontrado', 404);
     }
 

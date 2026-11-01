@@ -19,3 +19,18 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
 
     next();
 }
+
+/** Como authMiddleware pero no exige token: si viene uno válido llena req.user, si no sigue sin usuario. */
+export function optionalAuthMiddleware(req: Request, res: Response, next: NextFunction) {
+    const authHeader = req.headers.authorization;
+
+    if (authHeader?.startsWith('Bearer ')) {
+        try {
+            req.user = verificarTokenJWT(authHeader.split(' ')[1]);
+        } catch {
+            // token inválido en una ruta pública: se trata como invitado
+        }
+    }
+
+    next();
+}

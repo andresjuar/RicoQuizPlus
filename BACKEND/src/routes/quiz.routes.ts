@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
     getQuizzes,
+    getMyQuizzes,
     createQuiz,
     generateQuiz,
     getQuizById,
@@ -9,7 +10,7 @@ import {
     uploadQuizImage,
     uploadQuestionImage,
 } from '../controllers/quiz.controller';
-import { authMiddleware } from '../middlewares/auth.middleware';
+import { authMiddleware, optionalAuthMiddleware } from '../middlewares/auth.middleware';
 import { uploadImageMiddleware } from '../middlewares/upload.middleware';
 
 const router = Router();
@@ -19,7 +20,7 @@ const router = Router();
  * /quizzes:
  *   get:
  *     tags: [Quizzes]
- *     summary: Lista los quizzes disponibles (con paginado, para el dashboard de quizzes)
+ *     summary: Lista los quizzes públicos (búsqueda y paginado, para Explorar)
  *     parameters:
  *       - in: query
  *         name: q
@@ -27,7 +28,15 @@ const router = Router();
  *           type: string
  *           example: superhéroes
  *         required: false
- *         description: Texto de búsqueda para filtrar quizzes
+ *         description: Busca en título, descripción y tags (sin distinguir mayúsculas)
+ *
+ *       - in: query
+ *         name: topic
+ *         schema:
+ *           type: string
+ *           example: Ciencia
+ *         required: false
+ *         description: Filtra por tema exacto
  *
  *       - in: query
  *         name: tags
@@ -57,13 +66,54 @@ const router = Router();
  *           type: integer
  *           default: 10
  *         required: false
- *         description: Cantidad de resultados por página
+ *         description: Cantidad de resultados por página (máximo 50)
  *
  *     responses:
  *       200:
- *         description: Listado de quizzes
+ *         description: Página de quizzes
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/QuizPage' }
  */
 router.get('/', getQuizzes);
+
+/**
+ * @swagger
+ * /quizzes/mine:
+ *   get:
+ *     tags: [Quizzes]
+ *     summary: Lista los quizzes del usuario autenticado (públicos y privados)
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: visibility
+ *         schema:
+ *           type: string
+ *           enum: [all, public, private]
+ *           default: all
+ *       - in: query
+ *         name: q
+ *         schema: { type: string }
+ *       - in: query
+ *         name: topic
+ *         schema: { type: string }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 10 }
+ *     responses:
+ *       200:
+ *         description: Página de quizzes del usuario
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/QuizPage' }
+ *       401:
+ *         description: No autorizado
+ */
+router.get('/mine', authMiddleware, getMyQuizzes);
 
 /**
  * @swagger
@@ -333,7 +383,7 @@ router.post('/:id/questions/:questionIndex/image', authMiddleware, uploadImageMi
  *       404:
  *         description: Quiz no encontrado
  */
-router.get('/:id', getQuizById);
+router.get('/:id', optionalAuthMiddleware, getQuizById);
 router.put('/:id', authMiddleware, updateQuiz);
 router.delete('/:id', authMiddleware, deleteQuiz);
 
