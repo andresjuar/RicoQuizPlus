@@ -108,6 +108,29 @@ export const createQuiz = asyncHandler(async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /quizzes/generate-questions  { topic, numQuestions }
+ * Solo genera las preguntas con IA y las regresa, SIN guardar nada: el formulario
+ * de quiz las muestra para que el usuario las revise antes de guardar.
+ */
+export const generateQuestions = asyncHandler(async (req: Request, res: Response) => {
+    const { topic, numQuestions } = req.body ?? {};
+
+    if (!topic || typeof topic !== 'string') {
+        throw new AppError('El topic es requerido', 400);
+    }
+
+    const cantidad = Math.min(Math.max(Number(numQuestions) || 5, 1), 20);
+
+    try {
+        const questions = await generateTriviaQuestions(topic.trim(), cantidad);
+        return res.status(200).json({ questions });
+    } catch (error) {
+        if (error instanceof AppError) throw error;
+        throw new AppError('No se pudieron generar las preguntas con IA, intenta de nuevo', 502);
+    }
+});
+
+/**
  * POST /quizzes/generate
  */
 export const generateQuiz = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
